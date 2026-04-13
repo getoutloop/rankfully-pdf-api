@@ -697,36 +697,31 @@ def generate_report(data, output_path):
     # ── Build with page templates ───────────────────────────
     from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate
 
-    def cover_page_fn(c, d):
-        draw_cover_page(c, d, data)
+    # Single onPage callback: page 1 = cover, page 2+ = header/footer
+    def on_page(canvas_obj, doc):
+        if doc.page == 1:
+            draw_cover_page(canvas_obj, doc, data)
+        else:
+            page_decorations(canvas_obj, doc)
 
-    frame_cover = Frame(0, 0, W, H, leftPadding=0, rightPadding=0,
-                        topPadding=0, bottomPadding=0, id="cover_frame")
-    frame_body  = Frame(0.65*inch, 0.70*inch,
-                        W - 1.3*inch, H - 1.55*inch,
-                        id="body_frame")
-
-    cover_template = PageTemplate(id="cover", frames=[frame_cover],
-                                  onPage=cover_page_fn)
-    body_template  = PageTemplate(id="body",  frames=[frame_body],
-                                  onPage=page_decorations)
+    # Single body frame used for all pages (cover is drawn via onPage, not via frame content)
+    frame_body = Frame(
+        0.65 * inch, 0.70 * inch,
+        W - 1.3 * inch, H - 1.55 * inch,
+        id="body_frame"
+    )
 
     doc = BaseDocTemplate(
         output_path,
         pagesize=letter,
-        pageTemplates=[cover_template, body_template],
+        pageTemplates=[PageTemplate(id="main", frames=[frame_body], onPage=on_page)],
         title=f"Rankfully Audit — {url}",
         author="Rankfully.io",
     )
 
-    # Cover page first (single PageBreak), then body content
-    full_story = [
-        NextPageTemplate("cover"),
-        PageBreak(),
-        NextPageTemplate("body"),
-    ] + story
-
-    doc.build(full_story)
+    # PageBreak() keeps page 1 empty of story content so cover draws cleanly.
+    # Story content begins on page 2.
+    doc.build([PageBreak()] + story)
     return output_path
 
 
