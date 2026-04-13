@@ -521,28 +521,9 @@ def generate_report(data, output_path):
     # Build the PDF
     page_decorations = make_page_decorations(data)
 
-    class CoverTemplate(SimpleDocTemplate):
-        def afterPage(self):
-            pass
-
-    doc = SimpleDocTemplate(
-        output_path,
-        pagesize=letter,
-        leftMargin=0.65 * inch, rightMargin=0.65 * inch,
-        topMargin=0.85 * inch, bottomMargin=0.70 * inch,
-        title=f"Rankfully Audit — {url}",
-        author="Rankfully.io",
-        subject="Triple Business Visibility Audit",
-    )
-
     story = []
 
-    # ── COVER PAGE ─────────────────────────────────────────
-    story.append(NextPageTemplate("cover"))
-    story.append(PageBreak())  # triggers cover drawing via onFirstPage
-
-    # ── BODY PAGES ─────────────────────────────────────────
-    story.append(NextPageTemplate("body"))
+    # Body pages start immediately — cover is handled via full_story prefix below
 
     # Section 01: Executive Summary
     story.append(KeepTogether([
@@ -730,7 +711,7 @@ def generate_report(data, output_path):
     body_template  = PageTemplate(id="body",  frames=[frame_body],
                                   onPage=page_decorations)
 
-    doc2 = BaseDocTemplate(
+    doc = BaseDocTemplate(
         output_path,
         pagesize=letter,
         pageTemplates=[cover_template, body_template],
@@ -738,14 +719,14 @@ def generate_report(data, output_path):
         author="Rankfully.io",
     )
 
-    # Cover is first, then body pages
+    # Cover page first (single PageBreak), then body content
     full_story = [
         NextPageTemplate("cover"),
         PageBreak(),
         NextPageTemplate("body"),
     ] + story
 
-    doc2.build(full_story)
+    doc.build(full_story)
     return output_path
 
 
