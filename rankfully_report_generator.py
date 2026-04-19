@@ -4,7 +4,7 @@
 rankfully_report_generator.py  —  V3 Competitor Intelligence PDF
 Rankfully.io — GEO + SEO + Competitor Teardown Report
 
-Prepared by Ronnel Besagre | SEO/GEO Strategist
+Rankfully Audit Team
 
 POST /generate-pdf → returns PDF as base64 via app.py
 """
@@ -269,7 +269,7 @@ def make_page_decorations(report_data):
                               "Rankfully.io  |  Competitor Intelligence Report")
         canvas_obj.drawCentredString(W / 2, 0.16 * inch, f"Page {doc.page}")
         canvas_obj.drawRightString(W - 0.5 * inch, 0.16 * inch,
-                                   "Prepared by Ronnel Besagre | SEO/GEO Strategist")
+                                   "Rankfully Audit Team")
 
         canvas_obj.restoreState()
 
@@ -280,13 +280,33 @@ def make_page_decorations(report_data):
 def draw_cover_page(canvas_obj, doc, data):
     geo          = data.get("geo_score", 0)
     seo          = data.get("seo_score", 0)
-    comp_geo     = data.get("competitor_geo_score", 0)
+    raw_comp_geo = data.get("competitor_geo_score", 0)
     comp_domain  = data.get("competitor_domain", "competitor.com")
     threat_level = data.get("competitive_threat_level", "Unknown")
     lead_loss    = data.get("estimated_ai_lead_loss_pct", 0)
     url          = data.get("url", "your-website.com")
     name         = data.get("name", "")
     audit_date   = data.get("audit_date", datetime.now().strftime("%B %d, %Y"))
+
+    # Normalise no-competitor case (mirrors generate_report logic)
+    _no_comp_markers = ("no-competitor", "no competitor", "none", "n/a", "")
+    _no_comp = (not comp_domain or
+                any(m in str(comp_domain).lower() for m in _no_comp_markers))
+    if _no_comp:
+        comp_geo    = 0
+        comp_domain = "No Competitor Identified"
+    else:
+        comp_geo = raw_comp_geo
+
+    # Threat override for cover page
+    try:
+        _loss = int(lead_loss) if lead_loss else 0
+    except (ValueError, TypeError):
+        _loss = 0
+    if _loss >= 60 or geo <= 15:
+        threat_level = "High"
+    elif (_loss >= 30 or geo <= 35) and str(threat_level).lower() == "low":
+        threat_level = "Medium"
 
     canvas_obj.saveState()
 
@@ -338,10 +358,14 @@ def draw_cover_page(canvas_obj, doc, data):
         canvas_obj.drawCentredString(W / 2, H * 0.543, f"Prepared for: {name}")
 
     # Score boxes — 3 cards
+    # When no competitor found, show "MARKET OPPORTUNITY" box with N/A
+    comp_box_label  = "MARKET GAP" if _no_comp else "COMPETITOR GEO"
+    comp_box_rating = "Not Detected" if _no_comp else score_label(comp_geo)
+    comp_box_score  = comp_geo   # 0 when no competitor → shows 0/100
     scores = [
-        ("YOUR GEO SCORE",     geo,      score_label(geo)),
-        ("YOUR SEO SCORE",     seo,      score_label(seo)),
-        ("COMPETITOR GEO",     comp_geo, score_label(comp_geo)),
+        ("YOUR GEO SCORE",  geo,            score_label(geo)),
+        ("YOUR SEO SCORE",  seo,            score_label(seo)),
+        (comp_box_label,    comp_box_score, comp_box_rating),
     ]
 
     def box_color(sc):
@@ -359,13 +383,16 @@ def draw_cover_page(canvas_obj, doc, data):
 
     for i, (label, sc, rating) in enumerate(scores):
         x = box_x0 + i * (box_w + box_gap)
-        canvas_obj.setFillColor(box_color(sc))
+        # No-competitor box uses steel blue instead of score colour
+        fill = HexColor("#1A5276") if (i == 2 and _no_comp) else box_color(sc)
+        canvas_obj.setFillColor(fill)
         canvas_obj.roundRect(x, box_y, box_w, box_h, 6, fill=1, stroke=0)
         canvas_obj.setFillColor(WHITE)
         canvas_obj.setFont("Helvetica", 7)
         canvas_obj.drawCentredString(x + box_w / 2, box_y + box_h - 0.18 * inch, label)
         canvas_obj.setFont("Helvetica-Bold", 22)
-        canvas_obj.drawCentredString(x + box_w / 2, box_y + 0.38 * inch, f"{sc}/100")
+        score_text = "N/A" if (i == 2 and _no_comp) else f"{sc}/100"
+        canvas_obj.drawCentredString(x + box_w / 2, box_y + 0.38 * inch, score_text)
         canvas_obj.setFont("Helvetica", 8)
         canvas_obj.drawCentredString(x + box_w / 2, box_y + 0.14 * inch, rating)
 
@@ -409,7 +436,7 @@ def draw_cover_page(canvas_obj, doc, data):
     canvas_obj.setFillColor(MID_GRAY)
     canvas_obj.setFont("Helvetica", 7)
     canvas_obj.drawCentredString(W / 2, H * 0.040,
-        "Prepared by Ronnel Besagre | SEO/GEO Strategist")
+        "Rankfully Audit Team")
 
     canvas_obj.restoreState()
 
@@ -418,14 +445,20 @@ def draw_cover_page(canvas_obj, doc, data):
 def build_score_dashboard(data, S):
     geo      = data.get("geo_score", 0)
     seo      = data.get("seo_score", 0)
-    comp_geo = data.get("competitor_geo_score", 0)
     overall  = round((geo + seo) / 2)
 
+    _raw_domain = data.get("competitor_domain", "")
+    _no_comp_markers = ("no-competitor", "no competitor", "none", "n/a", "")
+    _no_comp = (not _raw_domain or
+                any(m in str(_raw_domain).lower() for m in _no_comp_markers))
+    comp_domain_label = "No Competitor Identified" if _no_comp else _raw_domain
+    comp_geo = 0 if _no_comp else data.get("competitor_geo_score", 0)
+
     rows_data = [
-        ("Your GEO Score — AI Search Visibility",          geo),
-        ("Your SEO Score — Traditional Search",            seo),
-        (f"Competitor GEO — {data.get('competitor_domain','competitor.com')}", comp_geo),
-        ("OVERALL VISIBILITY SCORE",                       overall),
+        ("Your GEO Score — AI Search Visibility",             geo),
+        ("Your SEO Score — Traditional Search",               seo),
+        (f"Competitor GEO — {comp_domain_label}",            comp_geo),
+        ("OVERALL VISIBILITY SCORE",                          overall),
     ]
     bold_rows = {3}
 
@@ -524,7 +557,9 @@ def build_weaknesses_section(weaknesses, comp_domain, S):
         if isinstance(w, str):
             w = {"weakness": w, "how_to_exploit": ""}
         title = w.get("weakness", w.get("title", f"Gap #{i}"))
-        exploit = w.get("how_to_exploit", w.get("action", ""))
+        exploit = (w.get("how_to_exploit") or w.get("action") or
+                   "Address this gap immediately — contact hello@rankfully.io "
+                   "for a customised step-by-step fix plan tailored to your business.")
         data = [
             [Paragraph(f"<b>Gap #{i}: {title}</b>",
                        ParagraphStyle("wt", fontSize=9.5, fontName="Helvetica-Bold", textColor=NAVY))],
@@ -653,6 +688,32 @@ def generate_report(data, output_path):
     threat_level = data.get("competitive_threat_level", "Unknown")
     lead_loss    = data.get("estimated_ai_lead_loss_pct", 0)
     overall      = round((geo + seo) / 2)
+
+    # ── No-competitor normalisation ─────────────────────────────
+    # When SerpAPI finds no organic rival, n8n sets competitor_domain to
+    # "no-competitor-detected". In that case we treat the report as a
+    # "market visibility" report rather than a head-to-head comparison.
+    _no_comp_markers = ("no-competitor", "no competitor", "none", "n/a", "")
+    no_competitor = (
+        not comp_domain or
+        any(m in str(comp_domain).lower() for m in _no_comp_markers)
+    )
+    if no_competitor:
+        comp_geo    = 0          # suppress fake score
+        comp_domain = "No Competitor Identified"
+
+    # ── Threat level override ───────────────────────────────────
+    # AI sometimes returns "Low" threat even when lead_loss is catastrophic.
+    # Override based on the site's own GEO score + lead_loss percentage.
+    try:
+        _loss = int(lead_loss) if lead_loss else 0
+    except (ValueError, TypeError):
+        _loss = 0
+
+    if _loss >= 60 or geo <= 15:
+        threat_level = "High"
+    elif (_loss >= 30 or geo <= 35) and threat_level.lower() == "low":
+        threat_level = "Medium"
 
     url        = data.get("url", "your-website.com")
     name       = data.get("name", "")
@@ -927,7 +988,7 @@ def generate_report(data, output_path):
             S["bottom_sub"]
         )],
         [Paragraph(
-            "Prepared by Ronnel Besagre | SEO/GEO Strategist",
+            "Rankfully Audit Team",
             ParagraphStyle("prep", fontSize=7.5, fontName="Helvetica",
                            textColor=HexColor("#7F8C8D"), alignment=TA_CENTER, leading=11)
         )],
@@ -966,7 +1027,7 @@ def generate_report(data, output_path):
         pagesize=letter,
         pageTemplates=[PageTemplate(id="main", frames=[frame_body], onPage=on_page)],
         title=f"Rankfully Competitor Intelligence — {url}",
-        author="Rankfully.io | Prepared by Ronnel Besagre | SEO/GEO Strategist",
+        author="Rankfully.io | Rankfully Audit Team",
     )
 
     # PageBreak() keeps page 1 empty so cover draws cleanly; story starts on page 2.
