@@ -81,6 +81,47 @@ def generate_pdf():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/stripe-portal", methods=["POST"])
+def stripe_portal():
+    """
+    POST body: { "email": "user@example.com" }
+    Returns:   { "url": "https://billing.stripe.com/..." }
+
+    Requires env vars:
+      STRIPE_SECRET_KEY       — your Stripe secret key (sk_live_...)
+      STRIPE_PORTAL_RETURN_URL — where to send user after portal (default: https://rankfully.io/dashboard)
+    """
+    try:
+        import stripe
+
+        stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+        if not stripe.api_key:
+            return jsonify({"success": False, "error": "Stripe not configured"}), 500
+
+        data  = request.get_json(force=True) or {}
+        email = data.get("email", "").strip().lower()
+        if not email:
+            return jsonify({"success": False, "error": "email required"}), 400
+
+        # Find Stripe customer by email
+        customers = stripe.Customer.list(email=email, limit=1)
+        if not customers.data:
+            return jsonify({"success": False, "error": "No Stripe customer found for this email"}), 404
+
+        customer_id  = customers.data[0].id
+        return_url   = os.environ.get("STRIPE_PORTAL_RETURN_URL", "https://rankfully.io/dashboard")
+
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=return_url,
+        )
+        return jsonify({"success": True, "url": session.url})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
