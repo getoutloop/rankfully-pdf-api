@@ -478,6 +478,11 @@ def build_competitor_findings_table(findings, S):
     if not findings:
         return Paragraph("No competitor findings available.", S["section_note"])
 
+    # Defensive: filter out any non-dict items (Claude may return strings)
+    findings = [f for f in findings if isinstance(f, dict)]
+    if not findings:
+        return Paragraph("No competitor findings available.", S["section_note"])
+
     header = [
         Paragraph("<b>GEO Check</b>",       S["table_header"]),
         Paragraph("<b>Your Site</b>",        S["table_header"]),
@@ -515,6 +520,9 @@ def build_weaknesses_section(weaknesses, comp_domain, S):
     """3 exploitable gaps as styled bullet boxes."""
     elements = []
     for i, w in enumerate(weaknesses[:3], 1):
+        # Defensive: handle string items from Claude
+        if isinstance(w, str):
+            w = {"weakness": w, "how_to_exploit": ""}
         title = w.get("weakness", w.get("title", f"Gap #{i}"))
         exploit = w.get("how_to_exploit", w.get("action", ""))
         data = [
@@ -558,8 +566,11 @@ def build_recovery_plan(recovery_plan, S):
     cells = []
     for (label, color), key in zip(week_colors, week_keys):
         week = recovery_plan.get(key, {})
-        action  = week.get("action", "")
-        outcome = week.get("outcome", "")
+        # Defensive: Claude may return week value as a plain string
+        if isinstance(week, str):
+            week = {"action": week, "outcome": ""}
+        action  = week.get("action", "") if isinstance(week, dict) else str(week)
+        outcome = week.get("outcome", "") if isinstance(week, dict) else ""
         cell_data = [
             [Paragraph(label, S["week_label"])],
             [Paragraph(f"<b>{action}</b>", S["week_action"])],
@@ -649,11 +660,19 @@ def generate_report(data, output_path):
     report_id  = data.get("report_id", "RF-000")
     audit_date = data.get("audit_date", datetime.now().strftime("%B %d, %Y"))
 
-    geo_findings        = data.get("geo_findings", [])
-    seo_findings        = data.get("seo_findings", [])
-    competitor_findings = data.get("competitor_findings", [])
+    geo_findings          = data.get("geo_findings", [])
+    seo_findings          = data.get("seo_findings", [])
+    competitor_findings   = data.get("competitor_findings", [])
     competitor_weaknesses = data.get("competitor_weaknesses", [])
-    recovery_plan       = data.get("recovery_plan", {})
+    recovery_plan         = data.get("recovery_plan", {})
+
+    # Defensive: ensure lists are actually lists (Claude may return None or string)
+    if not isinstance(geo_findings, list):        geo_findings = []
+    if not isinstance(seo_findings, list):        seo_findings = []
+    if not isinstance(competitor_findings, list): competitor_findings = []
+    if not isinstance(competitor_weaknesses, list): competitor_weaknesses = []
+    if not isinstance(recovery_plan, dict):       recovery_plan = {}
+
     all_findings        = geo_findings + seo_findings
 
     actions = data.get("action_plan", [])
