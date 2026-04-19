@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-rankfully-report-generator.py
-Rankfully.io — Triple Business Visibility Audit PDF Generator
-Reads report data from REPORT_DATA environment variable (JSON string)
-Outputs PDF to REPORT_OUTPUT_PATH environment variable
-Usage: called by n8n Execute Command node
+rankfully_report_generator.py  —  V3 Competitor Intelligence PDF
+Rankfully.io — GEO + SEO + Competitor Teardown Report
+
+Prepared by Ronnel Besagre | SEO/GEO Strategist
+
+POST /generate-pdf → returns PDF as base64 via app.py
 """
 
 import os
@@ -39,6 +40,7 @@ LIGHT_PINK = HexColor("#FDEDEC")
 LIGHT_GRN  = HexColor("#EAFAF1")
 LIGHT_ORG  = HexColor("#FEF9E7")
 INDIGO     = HexColor("#6366F1")  # Rankfully brand primary
+THREAT_RED = HexColor("#7B241C")
 
 W, H = letter
 
@@ -55,6 +57,12 @@ def score_label(score):
     if score >= 60: return "Fair"
     if score >= 40: return "Poor"
     return "Critical"
+
+def threat_color(level):
+    level = (level or "").upper()
+    if level == "HIGH":   return RED
+    if level == "MEDIUM": return ORANGE
+    return GREEN
 
 
 # ── Styles ────────────────────────────────────────────────────
@@ -96,6 +104,18 @@ def build_styles():
         "bottom_sub": ParagraphStyle(
             "bottom_sub", fontSize=9, fontName="Helvetica",
             leading=13, textColor=HexColor("#BDC3C7"), alignment=TA_CENTER
+        ),
+        "week_label": ParagraphStyle(
+            "week_label", fontSize=9, fontName="Helvetica-Bold",
+            textColor=WHITE, alignment=TA_CENTER
+        ),
+        "week_action": ParagraphStyle(
+            "week_action", fontSize=8.5, fontName="Helvetica-Bold",
+            textColor=NAVY, leading=12
+        ),
+        "week_outcome": ParagraphStyle(
+            "week_outcome", fontSize=8, fontName="Helvetica",
+            leading=12, textColor=HexColor("#2C3E50")
         ),
     }
 
@@ -149,7 +169,7 @@ def rating_para(score):
 
 # ── Status Badge ──────────────────────────────────────────────
 def status_badge(status_text):
-    s = status_text.upper()
+    s = (status_text or "WARNING").upper()
     if s in ("MISSING", "FAIL", "ERROR", "CRITICAL"):
         return Paragraph(
             f'<font color="#C0392B"><b>{s}</b></font>',
@@ -191,6 +211,30 @@ def impact_box(title, body_text, S):
     return t
 
 
+# ── Threat Banner ─────────────────────────────────────────────
+def threat_banner(level, lead_loss_pct, competitor_domain, S):
+    """Red/orange/green banner showing competitive threat level."""
+    tc = threat_color(level)
+    level_str = (level or "Unknown").upper()
+    loss_str  = f" · ~{lead_loss_pct}% of AI leads going to {competitor_domain}" if lead_loss_pct else ""
+    data = [[
+        Paragraph(
+            f'<font color="white"><b>COMPETITIVE THREAT: {level_str}{loss_str}</b></font>',
+            ParagraphStyle("threat", fontSize=10, fontName="Helvetica-Bold",
+                           textColor=WHITE, alignment=TA_CENTER)
+        )
+    ]]
+    t = Table(data, colWidths=[7.5 * inch])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), tc),
+        ("TOPPADDING",    (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 12),
+    ]))
+    return t
+
+
 # ── Page Decorations (Header + Footer on every body page) ─────
 def make_page_decorations(report_data):
     domain = report_data.get("domain", report_data.get("url", "rankfully.io"))
@@ -205,7 +249,7 @@ def make_page_decorations(report_data):
 
         canvas_obj.setFillColor(WHITE)
         canvas_obj.setFont("Helvetica-Bold", 9)
-        canvas_obj.drawString(0.5 * inch, H - 0.35 * inch, "TRIPLE VISIBILITY AUDIT REPORT")
+        canvas_obj.drawString(0.5 * inch, H - 0.35 * inch, "COMPETITOR INTELLIGENCE REPORT")
         canvas_obj.setFont("Helvetica", 8)
         canvas_obj.drawRightString(W - 0.5 * inch, H - 0.35 * inch,
                                    f"{domain}  |  {audit_date}")
@@ -222,9 +266,10 @@ def make_page_decorations(report_data):
         canvas_obj.setFillColor(WHITE)
         canvas_obj.setFont("Helvetica", 7)
         canvas_obj.drawString(0.5 * inch, 0.16 * inch,
-                              "Rankfully.io  |  Triple Business Visibility Audit")
+                              "Rankfully.io  |  Competitor Intelligence Report")
         canvas_obj.drawCentredString(W / 2, 0.16 * inch, f"Page {doc.page}")
-        canvas_obj.drawRightString(W - 0.5 * inch, 0.16 * inch, "CONFIDENTIAL")
+        canvas_obj.drawRightString(W - 0.5 * inch, 0.16 * inch,
+                                   "Prepared by Ronnel Besagre | SEO/GEO Strategist")
 
         canvas_obj.restoreState()
 
@@ -233,12 +278,15 @@ def make_page_decorations(report_data):
 
 # ── Cover Page ────────────────────────────────────────────────
 def draw_cover_page(canvas_obj, doc, data):
-    geo  = data.get("geo_score", 0)
-    seo  = data.get("seo_score", 0)
-    rep  = data.get("reputation_score", 0)
-    url  = data.get("url", "your-website.com")
-    name = data.get("name", "")
-    audit_date = data.get("audit_date", datetime.now().strftime("%B %d, %Y"))
+    geo          = data.get("geo_score", 0)
+    seo          = data.get("seo_score", 0)
+    comp_geo     = data.get("competitor_geo_score", 0)
+    comp_domain  = data.get("competitor_domain", "competitor.com")
+    threat_level = data.get("competitive_threat_level", "Unknown")
+    lead_loss    = data.get("estimated_ai_lead_loss_pct", 0)
+    url          = data.get("url", "your-website.com")
+    name         = data.get("name", "")
+    audit_date   = data.get("audit_date", datetime.now().strftime("%B %d, %Y"))
 
     canvas_obj.saveState()
 
@@ -263,36 +311,37 @@ def draw_cover_page(canvas_obj, doc, data):
 
     # Report Title
     canvas_obj.setFillColor(WHITE)
-    canvas_obj.setFont("Helvetica-Bold", 28)
-    canvas_obj.drawCentredString(W / 2, H * 0.72, "TRIPLE VISIBILITY AUDIT")
+    canvas_obj.setFont("Helvetica-Bold", 26)
+    canvas_obj.drawCentredString(W / 2, H * 0.72, "COMPETITOR INTELLIGENCE REPORT")
 
-    # Subtitle (gold)
+    # Subtitle (gold) — the audited URL
     canvas_obj.setFillColor(GOLD)
-    canvas_obj.setFont("Helvetica-Bold", 16)
+    canvas_obj.setFont("Helvetica-Bold", 14)
     canvas_obj.drawCentredString(W / 2, H * 0.665, url)
 
-    # Meta line (gray)
+    # Meta line — competitor name
     canvas_obj.setFillColor(MID_GRAY)
-    canvas_obj.setFont("Helvetica", 9.5)
-    canvas_obj.drawCentredString(W / 2, H * 0.615, "GEO Score  |  SEO Score  |  Reputation Score")
+    canvas_obj.setFont("Helvetica", 9)
+    canvas_obj.drawCentredString(W / 2, H * 0.623,
+                                 f"vs. {comp_domain}  |  GEO Score  |  SEO Score  |  Competitor GEO")
 
     # Gold divider line
     canvas_obj.setStrokeColor(GOLD)
     canvas_obj.setLineWidth(1.5)
-    canvas_obj.line(0.75 * inch, H * 0.585, W - 0.75 * inch, H * 0.585)
+    canvas_obj.line(0.75 * inch, H * 0.598, W - 0.75 * inch, H * 0.598)
 
     # Meta info
     canvas_obj.setFillColor(WHITE)
     canvas_obj.setFont("Helvetica", 8.5)
-    canvas_obj.drawCentredString(W / 2, H * 0.548, f"Audit Date: {audit_date}")
+    canvas_obj.drawCentredString(W / 2, H * 0.565, f"Audit Date: {audit_date}")
     if name:
-        canvas_obj.drawCentredString(W / 2, H * 0.524, f"Prepared for: {name}")
+        canvas_obj.drawCentredString(W / 2, H * 0.543, f"Prepared for: {name}")
 
-    # Score boxes
+    # Score boxes — 3 cards
     scores = [
-        ("GEO Score",        geo,  score_label(geo)),
-        ("SEO Score",        seo,  score_label(seo)),
-        ("Reputation Score", rep,  score_label(rep)),
+        ("YOUR GEO SCORE",     geo,      score_label(geo)),
+        ("YOUR SEO SCORE",     seo,      score_label(seo)),
+        ("COMPETITOR GEO",     comp_geo, score_label(comp_geo)),
     ]
 
     def box_color(sc):
@@ -306,45 +355,77 @@ def draw_cover_page(canvas_obj, doc, data):
     box_gap = 0.25 * inch
     total_w = 3 * box_w + 2 * box_gap
     box_x0  = (W - total_w) / 2
-    box_y   = H * 0.365
+    box_y   = H * 0.375
 
     for i, (label, sc, rating) in enumerate(scores):
         x = box_x0 + i * (box_w + box_gap)
         canvas_obj.setFillColor(box_color(sc))
         canvas_obj.roundRect(x, box_y, box_w, box_h, 6, fill=1, stroke=0)
         canvas_obj.setFillColor(WHITE)
-        canvas_obj.setFont("Helvetica", 7.5)
-        canvas_obj.drawCentredString(x + box_w / 2, box_y + box_h - 0.18 * inch, label.upper())
+        canvas_obj.setFont("Helvetica", 7)
+        canvas_obj.drawCentredString(x + box_w / 2, box_y + box_h - 0.18 * inch, label)
         canvas_obj.setFont("Helvetica-Bold", 22)
         canvas_obj.drawCentredString(x + box_w / 2, box_y + 0.38 * inch, f"{sc}/100")
         canvas_obj.setFont("Helvetica", 8)
         canvas_obj.drawCentredString(x + box_w / 2, box_y + 0.14 * inch, rating)
 
+    # Competitor GEO sub-label
+    canvas_obj.setFillColor(MID_GRAY)
+    canvas_obj.setFont("Helvetica", 7)
+    canvas_obj.drawCentredString(
+        box_x0 + 2 * (box_w + box_gap) + box_w / 2,
+        box_y - 0.14 * inch,
+        comp_domain
+    )
+
+    # Threat Level badge
+    tc_map = {"HIGH": HexColor("#922B21"), "MEDIUM": HexColor("#D35400"),
+               "LOW": HexColor("#1E8449"), "UNKNOWN": HexColor("#1A5276")}
+    tc = tc_map.get((threat_level or "").upper(), HexColor("#1A5276"))
+    badge_w = 2.5 * inch
+    badge_h = 0.3 * inch
+    badge_x = (W - badge_w) / 2
+    badge_y = box_y - 0.55 * inch
+    canvas_obj.setFillColor(tc)
+    canvas_obj.roundRect(badge_x, badge_y, badge_w, badge_h, 4, fill=1, stroke=0)
+    canvas_obj.setFillColor(WHITE)
+    canvas_obj.setFont("Helvetica-Bold", 8)
+    loss_str = f"  ·  ~{lead_loss}% leads lost" if lead_loss else ""
+    canvas_obj.drawCentredString(W / 2, badge_y + 0.09 * inch,
+                                  f"THREAT: {(threat_level or 'Unknown').upper()}{loss_str}")
+
     # Classification label
     canvas_obj.setFillColor(GOLD)
-    canvas_obj.setFont("Helvetica-Bold", 11)
-    canvas_obj.drawCentredString(W / 2, H * 0.145, "RANKFULLY AUDIT REPORT")
+    canvas_obj.setFont("Helvetica-Bold", 10)
+    canvas_obj.drawCentredString(W / 2, H * 0.138, "RANKFULLY COMPETITOR INTELLIGENCE REPORT")
 
     # Bottom branding
     canvas_obj.setFillColor(MID_GRAY)
     canvas_obj.setFont("Helvetica", 7.5)
-    canvas_obj.drawCentredString(W / 2, H * 0.065, "Be Found. Be Trusted. Be Chosen.  |  rankfully.io")
+    canvas_obj.drawCentredString(W / 2, H * 0.065,
+        "Be Found. Be Trusted. Beat Your Competition.  |  rankfully.io")
+
+    # Prepared by
+    canvas_obj.setFillColor(MID_GRAY)
+    canvas_obj.setFont("Helvetica", 7)
+    canvas_obj.drawCentredString(W / 2, H * 0.040,
+        "Prepared by Ronnel Besagre | SEO/GEO Strategist")
 
     canvas_obj.restoreState()
 
 
 # ── Score Dashboard Table ─────────────────────────────────────
 def build_score_dashboard(data, S):
-    geo = data.get("geo_score", 0)
-    seo = data.get("seo_score", 0)
-    rep = data.get("reputation_score", 0)
-    overall = round((geo + seo + rep) / 3)
+    geo      = data.get("geo_score", 0)
+    seo      = data.get("seo_score", 0)
+    comp_geo = data.get("competitor_geo_score", 0)
+    overall  = round((geo + seo) / 2)
 
     rows_data = [
-        ("GEO Score — AI Search Visibility",       geo),
-        ("SEO Score — Traditional Search",         seo),
-        ("Reputation Score — Online Trust",        rep),
-        ("OVERALL VISIBILITY SCORE",               overall),
+        ("Your GEO Score — AI Search Visibility",          geo),
+        ("Your SEO Score — Traditional Search",            seo),
+        (f"Competitor GEO — {data.get('competitor_domain','competitor.com')}", comp_geo),
+        ("OVERALL VISIBILITY SCORE",                       overall),
     ]
     bold_rows = {3}
 
@@ -374,6 +455,8 @@ def build_score_dashboard(data, S):
         ("FONTNAME",       (0, 0), (-1, 0),  "Helvetica-Bold"),
         ("FONTSIZE",       (0, 0), (-1, 0),  9),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, LIGHT_GRAY]),
+        # Highlight competitor row
+        ("BACKGROUND",     (0, 3), (-1, 3),  LIGHT_PINK),
         ("BACKGROUND",     (0, 4), (-1, 4),  HexColor("#D6EAF8")),
         ("GRID",           (0, 0), (-1, -1), 0.4, HexColor("#D5D8DC")),
         ("TOPPADDING",     (0, 0), (-1, -1), 6),
@@ -386,23 +469,30 @@ def build_score_dashboard(data, S):
     return t
 
 
-# ── Findings Table ────────────────────────────────────────────
-def build_findings_table(findings, S):
+# ── Competitor Findings Table (Side-by-Side) ──────────────────
+def build_competitor_findings_table(findings, S):
+    """
+    findings: list of {check, your_status, competitor_status, your_finding, competitor_finding}
+    Renders a side-by-side comparison table.
+    """
+    if not findings:
+        return Paragraph("No competitor findings available.", S["section_note"])
+
     header = [
-        Paragraph("<b>Category</b>",  S["table_header"]),
-        Paragraph("<b>Check</b>",     S["table_header"]),
-        Paragraph("<b>Status</b>",    S["table_header"]),
-        Paragraph("<b>Finding</b>",   S["table_header"]),
+        Paragraph("<b>GEO Check</b>",       S["table_header"]),
+        Paragraph("<b>Your Site</b>",        S["table_header"]),
+        Paragraph("<b>Competitor</b>",       S["table_header"]),
+        Paragraph("<b>Gap &amp; Opportunity</b>", S["table_header"]),
     ]
     rows = [header]
     for f in findings:
         rows.append([
-            Paragraph(f.get("category", ""), S["table_cell"]),
-            Paragraph(f.get("check", ""),    S["table_cell"]),
-            status_badge(f.get("status", "WARNING")),
-            Paragraph(f.get("finding", ""), S["table_cell"]),
+            Paragraph(f.get("check", ""),               S["table_cell"]),
+            status_badge(f.get("your_status", "WARNING")),
+            status_badge(f.get("competitor_status", "WARNING")),
+            Paragraph(f.get("gap", f.get("finding", "")), S["table_cell"]),
         ])
-    t = Table(rows, colWidths=[1.1*inch, 1.4*inch, 0.8*inch, 4.2*inch], repeatRows=1)
+    t = Table(rows, colWidths=[1.6*inch, 1.0*inch, 1.0*inch, 3.9*inch], repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND",     (0, 0), (-1, 0),  NAVY),
         ("TEXTCOLOR",      (0, 0), (-1, 0),  WHITE),
@@ -414,10 +504,89 @@ def build_findings_table(findings, S):
         ("BOTTOMPADDING",  (0, 0), (-1, -1), 5),
         ("LEFTPADDING",    (0, 0), (-1, -1), 6),
         ("RIGHTPADDING",   (0, 0), (-1, -1), 6),
-        ("VALIGN",         (0, 0), (-1, -1), "TOP"),
+        ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
         ("FONTSIZE",       (0, 1), (-1, -1), 8.5),
     ]))
     return t
+
+
+# ── Competitor Weaknesses List ────────────────────────────────
+def build_weaknesses_section(weaknesses, comp_domain, S):
+    """3 exploitable gaps as styled bullet boxes."""
+    elements = []
+    for i, w in enumerate(weaknesses[:3], 1):
+        title = w.get("weakness", w.get("title", f"Gap #{i}"))
+        exploit = w.get("how_to_exploit", w.get("action", ""))
+        data = [
+            [Paragraph(f"<b>Gap #{i}: {title}</b>",
+                       ParagraphStyle("wt", fontSize=9.5, fontName="Helvetica-Bold", textColor=NAVY))],
+            [Paragraph(f"<b>How to exploit it:</b> {exploit}", S["impact_body"])],
+        ]
+        t = Table(data, colWidths=[7.0 * inch])
+        t.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (0, 0),   HexColor("#FDEDEC")),
+            ("BACKGROUND",    (0, 1), (0, 1),   HexColor("#FEF9E7")),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 12),
+            ("TOPPADDING",    (0, 0), (0, 0),   9),
+            ("BOTTOMPADDING", (0, 0), (0, 0),   4),
+            ("TOPPADDING",    (0, 1), (0, 1),   4),
+            ("BOTTOMPADDING", (0, 1), (0, 1),   9),
+            ("BOX",           (0, 0), (-1, -1), 0.5, RED),
+            ("LINEBEFORE",    (0, 0), (0, -1),  4, RED),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 6))
+    return elements
+
+
+# ── 3-Week Recovery Plan ──────────────────────────────────────
+def build_recovery_plan(recovery_plan, S):
+    """
+    recovery_plan: {week1: {action, outcome}, week2: {...}, week3: {...}}
+    """
+    if not recovery_plan:
+        return []
+
+    week_colors = [
+        ("WEEK 1",  HexColor("#154360")),  # dark navy
+        ("WEEK 2",  HexColor("#1A5276")),  # steel blue
+        ("WEEK 3",  HexColor("#1E8449")),  # green — final win
+    ]
+    week_keys = ["week1", "week2", "week3"]
+
+    cells = []
+    for (label, color), key in zip(week_colors, week_keys):
+        week = recovery_plan.get(key, {})
+        action  = week.get("action", "")
+        outcome = week.get("outcome", "")
+        cell_data = [
+            [Paragraph(label, S["week_label"])],
+            [Paragraph(f"<b>{action}</b>", S["week_action"])],
+            [Paragraph(outcome, S["week_outcome"])],
+        ]
+        ct = Table(cell_data, colWidths=[2.35 * inch])
+        ct.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (0, 0),   color),
+            ("BACKGROUND",    (0, 1), (0, 1),   HexColor("#EBF5FB")),
+            ("BACKGROUND",    (0, 2), (0, 2),   WHITE),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+            ("TOPPADDING",    (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("BOX",           (0, 0), (-1, -1), 0.5, HexColor("#D5D8DC")),
+        ]))
+        cells.append(ct)
+
+    row_t = Table([cells], colWidths=[2.35 * inch] * 3,
+                  spaceAfter=0, hAlign="LEFT")
+    row_t.setStyle(TableStyle([
+        ("ALIGN",        (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return [row_t]
 
 
 # ── Action Plan Table ─────────────────────────────────────────
@@ -465,82 +634,93 @@ def build_action_table(actions, S):
 # ── Main Generator ────────────────────────────────────────────
 def generate_report(data, output_path):
     S = build_styles()
-    geo = data.get("geo_score", 0)
-    seo = data.get("seo_score", 0)
-    rep = data.get("reputation_score", 0)
-    overall = round((geo + seo + rep) / 3)
-    url     = data.get("url", "your-website.com")
-    name    = data.get("name", "")
-    email   = data.get("email", "")
+
+    geo          = data.get("geo_score", 0)
+    seo          = data.get("seo_score", 0)
+    comp_geo     = data.get("competitor_geo_score", 0)
+    comp_domain  = data.get("competitor_domain", "your-competitor.com")
+    threat_level = data.get("competitive_threat_level", "Unknown")
+    lead_loss    = data.get("estimated_ai_lead_loss_pct", 0)
+    overall      = round((geo + seo) / 2)
+
+    url        = data.get("url", "your-website.com")
+    name       = data.get("name", "")
+    email      = data.get("email", "")
     report_id  = data.get("report_id", "RF-000")
     audit_date = data.get("audit_date", datetime.now().strftime("%B %d, %Y"))
 
-    geo_findings = data.get("geo_findings", [])
-    seo_findings = data.get("seo_findings", [])
-    rep_findings = data.get("rep_findings", [])
-    all_findings = geo_findings + seo_findings + rep_findings
+    geo_findings        = data.get("geo_findings", [])
+    seo_findings        = data.get("seo_findings", [])
+    competitor_findings = data.get("competitor_findings", [])
+    competitor_weaknesses = data.get("competitor_weaknesses", [])
+    recovery_plan       = data.get("recovery_plan", {})
+    all_findings        = geo_findings + seo_findings
 
     actions = data.get("action_plan", [])
     exec_summary = data.get("executive_summary", (
-        f"This Rankfully audit analysed {url} across three critical visibility dimensions: "
-        f"AI Search (GEO), Traditional Search (SEO), and Online Reputation. "
-        f"The overall visibility score is {overall}/100. "
-        f"Key areas requiring attention have been identified and prioritised below."
+        f"This Rankfully Competitor Intelligence Report analysed {url} and its primary AI search "
+        f"competitor, {comp_domain}. Your GEO score is {geo}/100 vs your competitor's {comp_geo}/100. "
+        f"Your SEO score is {seo}/100. Overall visibility: {overall}/100. "
+        f"Competitive threat level: {threat_level}. "
+        f"The 3-week recovery plan and competitor blind spots are detailed below."
     ))
 
     impacts = data.get("impacts", [
         {
             "title": f"GEO Score: {geo}/100 — AI Search Visibility",
             "body": (
-                f"Your business scores {geo}/100 for AI search visibility. "
+                f"Your business scores {geo}/100 for AI search visibility vs {comp_domain}'s {comp_geo}/100. "
                 "When potential customers ask ChatGPT, Perplexity, or Google AI Overviews "
-                "about services in your category, your ability to appear in those answers depends "
-                "on factors measured in this score — including AI crawler access, content citability, "
-                "and structured data presence."
+                "about services in your category, your competitor currently has the advantage. "
+                "The fixes in this report will close that gap within 3 weeks."
             )
         },
         {
             "title": f"SEO Score: {seo}/100 — Traditional Search",
             "body": (
                 f"Your business scores {seo}/100 for traditional SEO. "
-                "This reflects how well your website is positioned for Google and Bing search results "
-                "through keyword targeting, meta data, technical health, and content quality."
+                "This reflects keyword targeting, meta data, technical health, and content quality "
+                "across Google and Bing — where your competitor is also fighting for the same customers."
             )
         },
         {
-            "title": f"Reputation Score: {rep}/100 — Online Trust",
+            "title": f"Competitive Threat: {threat_level} — {lead_loss}% of AI Leads at Risk",
             "body": (
-                f"Your online reputation scores {rep}/100. "
-                "This measures your Google review profile — star rating, volume, recency, "
-                "and response rate. Both real customers and AI systems use these signals "
-                "to judge whether to trust and recommend your business."
+                f"{comp_domain} is currently winning in AI search for your target category. "
+                f"An estimated {lead_loss}% of leads that should come to you are going to them instead. "
+                "The 3 competitor blind spots in this report are your fastest path to closing that gap."
             )
         },
     ])
 
-    # Build the PDF
+    # ── Build the PDF ────────────────────────────────────────
     page_decorations = make_page_decorations(data)
 
     story = []
 
-    # Body pages start immediately — cover is handled via full_story prefix below
-
-    # Section 01: Executive Summary
+    # Section 01: Executive Summary + Threat Banner
     story.append(KeepTogether([
         section_header("01  |  EXECUTIVE SUMMARY"),
+        Spacer(1, 8),
+        threat_banner(threat_level, lead_loss, comp_domain, S),
         Spacer(1, 10),
         Paragraph(exec_summary, S["body"]),
     ]))
     story.append(Spacer(1, 16))
 
     # Score callout row
+    geo_idx  = min(geo  // 25, 3)
+    seo_idx  = min(seo  // 25, 3)
+    comp_idx = min(comp_geo // 25, 3)
+    score_colors = ["#922B21", "#1A5276", "#D4AC0D", "#1E8449"]
+
     score_callout_data = [[
-        Paragraph(f'<font color="{["#922B21","#1A5276","#D4AC0D","#1E8449"][min(geo//25,3)]}"><b>GEO: {geo}/100</b></font>',
+        Paragraph(f'<font color="{score_colors[geo_idx]}"><b>GEO: {geo}/100</b></font>',
                   ParagraphStyle("sc2", fontSize=13, fontName="Helvetica-Bold", alignment=TA_CENTER)),
-        Paragraph(f'<font color="{["#922B21","#1A5276","#D4AC0D","#1E8449"][min(seo//25,3)]}"><b>SEO: {seo}/100</b></font>',
+        Paragraph(f'<font color="{score_colors[seo_idx]}"><b>SEO: {seo}/100</b></font>',
                   ParagraphStyle("sc2", fontSize=13, fontName="Helvetica-Bold", alignment=TA_CENTER)),
-        Paragraph(f'<font color="{["#922B21","#1A5276","#D4AC0D","#1E8449"][min(rep//25,3)]}"><b>REP: {rep}/100</b></font>',
-                  ParagraphStyle("sc2", fontSize=13, fontName="Helvetica-Bold", alignment=TA_CENTER)),
+        Paragraph(f'<font color="{score_colors[comp_idx]}"><b>vs {comp_domain}: {comp_geo}/100</b></font>',
+                  ParagraphStyle("sc2", fontSize=11, fontName="Helvetica-Bold", alignment=TA_CENTER)),
     ]]
     score_row_t = Table(score_callout_data, colWidths=[2.5*inch]*3)
     score_row_t.setStyle(TableStyle([
@@ -558,7 +738,7 @@ def generate_report(data, output_path):
         section_header("02  |  SCORE DASHBOARD"),
         Spacer(1, 8),
         Paragraph(
-            "Performance across all three visibility dimensions on a 0-100 scale. "
+            f"Your AI visibility vs {comp_domain} across all dimensions. "
             "75+ = Good  |  60-74 = Fair  |  40-59 = Poor  |  0-39 = Critical",
             S["section_note"]
         ),
@@ -567,7 +747,22 @@ def generate_report(data, output_path):
     ]))
     story.append(Spacer(1, 20))
 
-    # Section 03: What We Found
+    # Section 03: Side-by-Side Competitor GEO Comparison
+    if competitor_findings:
+        story.append(KeepTogether([
+            section_header("03  |  COMPETITOR GEO COMPARISON", color=STEEL_BLUE),
+            Spacer(1, 8),
+            Paragraph(
+                f"Side-by-side GEO health check: your site vs {comp_domain}. "
+                "Green = advantage. Red = gap to close.",
+                S["section_note"]
+            ),
+            Spacer(1, 6),
+            build_competitor_findings_table(competitor_findings, S),
+        ]))
+        story.append(Spacer(1, 20))
+
+    # Section 04: What We Found (your GEO + SEO findings)
     if all_findings:
         first_rows = all_findings[:5]
         rest_rows  = all_findings[5:]
@@ -603,7 +798,7 @@ def generate_report(data, output_path):
             ("FONTSIZE",       (0, 1), (-1, -1), 8.5),
         ]))
         story.append(KeepTogether([
-            section_header("03  |  WHAT WE FOUND"),
+            section_header("04  |  YOUR SITE AUDIT FINDINGS"),
             Spacer(1, 8),
             first_t,
         ]))
@@ -627,10 +822,27 @@ def generate_report(data, output_path):
             story.append(rest_t)
         story.append(Spacer(1, 20))
 
-    # Section 04: What This Means For You
+    # Section 05: Competitor Blind Spots (3 exploitable weaknesses)
+    if competitor_weaknesses:
+        weakness_elements = build_weaknesses_section(competitor_weaknesses, comp_domain, S)
+        story.append(KeepTogether([
+            section_header("05  |  3 COMPETITOR BLIND SPOTS TO EXPLOIT", color=RED),
+            Spacer(1, 10),
+            Paragraph(
+                f"These are confirmed weaknesses in {comp_domain}'s AI search presence. "
+                "Act on these before they do.",
+                S["section_note"]
+            ),
+            Spacer(1, 8),
+        ]))
+        for el in weakness_elements:
+            story.append(el)
+        story.append(Spacer(1, 20))
+
+    # Section 06: What This Means For You
     if impacts:
         story.append(KeepTogether([
-            section_header("04  |  WHAT THIS MEANS FOR YOU"),
+            section_header("06  |  WHAT THIS MEANS FOR YOUR REVENUE"),
             Spacer(1, 10),
             impact_box(impacts[0]["title"], impacts[0]["body"], S),
         ]))
@@ -640,13 +852,29 @@ def generate_report(data, output_path):
             story.append(Spacer(1, 8))
         story.append(Spacer(1, 12))
 
-    # Section 05: Priority Action Plan
-    if actions:
+    # Section 07: 3-Week Recovery Plan
+    if recovery_plan:
+        plan_elements = build_recovery_plan(recovery_plan, S)
         story.append(KeepTogether([
-            section_header("05  |  30-DAY PRIORITY ACTION PLAN"),
+            section_header("07  |  YOUR 3-WEEK RECOVERY BATTLE PLAN", color=GREEN),
             Spacer(1, 8),
             Paragraph(
-                "Prioritised fixes — start with HIGH priority items for fastest score improvement.",
+                "Three focused weeks to close the AI search gap and take leads back from your competitor.",
+                S["section_note"]
+            ),
+            Spacer(1, 8),
+        ]))
+        for el in plan_elements:
+            story.append(el)
+        story.append(Spacer(1, 20))
+
+    # Section 08: Priority Action Plan
+    if actions:
+        story.append(KeepTogether([
+            section_header("08  |  30-DAY PRIORITY ACTION PLAN"),
+            Spacer(1, 8),
+            Paragraph(
+                "Prioritised fixes — start with HIGH priority items for fastest competitive gain.",
                 S["section_note"]
             ),
             Spacer(1, 6),
@@ -655,29 +883,34 @@ def generate_report(data, output_path):
         if len(actions) > 6:
             rest_actions = actions[6:]
             story.append(build_action_table(
-                [{"priority":"","action":"","category":"","impact":""}] + rest_actions,
+                [{"priority": "", "action": "", "category": "", "impact": ""}] + rest_actions,
                 S
             ))
         story.append(Spacer(1, 20))
 
-    # Section 06: Bottom Line
+    # Section 09: Bottom Line
     bottom_text = data.get("bottom_line", (
-        f"Your overall visibility score is {overall}/100. "
-        f"The actions in this report — if implemented — will measurably improve how AI search, "
-        f"Google, and real customers find and trust your business within 30 days."
+        f"Your overall visibility score is {overall}/100 vs {comp_domain}'s GEO score of {comp_geo}/100. "
+        f"Every week you wait is another week your competitor captures the AI search leads that should be yours. "
+        f"Start Week 1 today."
     ))
     cta_data = [
         [Paragraph(
-            f"<b>Your Rankfully Score: {overall}/100</b>",
-            ParagraphStyle("bl_title", fontSize=14, fontName="Helvetica-Bold",
+            f"<b>Your Score: {overall}/100  |  {comp_domain}: {comp_geo}/100 GEO</b>",
+            ParagraphStyle("bl_title", fontSize=13, fontName="Helvetica-Bold",
                            textColor=WHITE, alignment=TA_CENTER, leading=18)
         )],
         [Spacer(1, 4)],
         [Paragraph(bottom_text, S["bottom_line"])],
         [Spacer(1, 8)],
         [Paragraph(
-            f"Re-audit in 30 days to track your progress.  |  hello@rankfully.io  |  rankfully.io",
+            f"Re-audit next month to track your gains.  |  hello@rankfully.io  |  rankfully.io",
             S["bottom_sub"]
+        )],
+        [Paragraph(
+            "Prepared by Ronnel Besagre | SEO/GEO Strategist",
+            ParagraphStyle("prep", fontSize=7.5, fontName="Helvetica",
+                           textColor=HexColor("#7F8C8D"), alignment=TA_CENTER, leading=11)
         )],
     ]
     cta_t = Table(cta_data, colWidths=[7.5 * inch])
@@ -689,22 +922,20 @@ def generate_report(data, output_path):
         ("RIGHTPADDING",  (0, 0), (-1, -1), 20),
     ]))
     story.append(KeepTogether([
-        section_header("06  |  BOTTOM LINE"),
+        section_header("09  |  BOTTOM LINE"),
         Spacer(1, 8),
         cta_t,
     ]))
 
-    # ── Build with page templates ───────────────────────────
+    # ── Build with page templates ────────────────────────────
     from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate
 
-    # Single onPage callback: page 1 = cover, page 2+ = header/footer
     def on_page(canvas_obj, doc):
         if doc.page == 1:
             draw_cover_page(canvas_obj, doc, data)
         else:
             page_decorations(canvas_obj, doc)
 
-    # Single body frame used for all pages (cover is drawn via onPage, not via frame content)
     frame_body = Frame(
         0.65 * inch, 0.70 * inch,
         W - 1.3 * inch, H - 1.55 * inch,
@@ -715,12 +946,11 @@ def generate_report(data, output_path):
         output_path,
         pagesize=letter,
         pageTemplates=[PageTemplate(id="main", frames=[frame_body], onPage=on_page)],
-        title=f"Rankfully Audit — {url}",
-        author="Rankfully.io",
+        title=f"Rankfully Competitor Intelligence — {url}",
+        author="Rankfully.io | Prepared by Ronnel Besagre | SEO/GEO Strategist",
     )
 
-    # PageBreak() keeps page 1 empty of story content so cover draws cleanly.
-    # Story content begins on page 2.
+    # PageBreak() keeps page 1 empty so cover draws cleanly; story starts on page 2.
     doc.build([PageBreak()] + story)
     return output_path
 
@@ -728,17 +958,11 @@ def generate_report(data, output_path):
 # ── Entry Point ───────────────────────────────────────────────
 if __name__ == "__main__":
     """
-    Usage (n8n Write File → Execute approach):
-      python rankfully-report-generator.py "path/to/report-data.json"
-
-    Usage (legacy env var approach):
-      set REPORT_DATA={...json...}
-      python rankfully-report-generator.py
+    Usage: python rankfully_report_generator.py "path/to/report-data.json"
     """
 
     data = None
 
-    # PRIMARY: Read from JSON file path passed as argument (used by n8n v2 workflow)
     if len(sys.argv) > 1:
         json_path = sys.argv[1]
         try:
@@ -751,12 +975,10 @@ if __name__ == "__main__":
             print(f"ERROR: Failed to parse JSON file {json_path}: {e}", file=sys.stderr)
             sys.exit(1)
 
-    # FALLBACK: Read from REPORT_DATA environment variable
     if data is None:
         raw = os.environ.get("REPORT_DATA", "")
         if not raw:
             print("ERROR: No JSON file path provided and REPORT_DATA env var is empty.", file=sys.stderr)
-            print("Usage: python rankfully-report-generator.py <path-to-data.json>", file=sys.stderr)
             sys.exit(1)
         try:
             data = json.loads(raw)
@@ -764,10 +986,9 @@ if __name__ == "__main__":
             print(f"ERROR: Failed to parse REPORT_DATA: {e}", file=sys.stderr)
             sys.exit(1)
 
-    report_id   = data.get("report_id", f"RF-{int(datetime.now().timestamp())}")
-    output_dir  = os.environ.get("REPORT_OUTPUT_DIR",
-                                  r"D:\Claude_Code\RonnelBesagre\Project SaaS\reports")
-    # If JSON file was in reports dir, use that dir; otherwise use env var
+    report_id  = data.get("report_id", f"RF-{int(datetime.now().timestamp())}")
+    output_dir = os.environ.get("REPORT_OUTPUT_DIR",
+                                 r"D:\Claude_Code\RonnelBesagre\Project SaaS\reports")
     if len(sys.argv) > 1:
         output_dir = os.path.dirname(sys.argv[1])
     output_path = os.path.join(output_dir, f"{report_id}.pdf")
