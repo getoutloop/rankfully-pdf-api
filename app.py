@@ -41,8 +41,17 @@ def generate_pdf():
     """
     try:
         data = request.get_json(force=True)
-        if not data:
-            return jsonify({"success": False, "error": "Empty request body"}), 400
+
+        # n8n sometimes sends JSON.stringify output — a string instead of a dict.
+        # Unwrap it until we have a dict.
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                pass
+
+        if not data or not isinstance(data, dict):
+            return jsonify({"success": False, "error": "Empty or invalid request body"}), 400
 
         report_id  = data.get("report_id", f"RF-{int(datetime.now().timestamp())}")
         output_path = os.path.join(REPORTS_DIR, f"{report_id}.pdf")
